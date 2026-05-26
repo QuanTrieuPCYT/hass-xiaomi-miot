@@ -144,8 +144,6 @@ class FanEntity(XEntity, BaseEntity):
             val = self._conv_power.value_from_dict(data)
             if val is not None:
                 self._attr_is_on = bool(val)
-                if not self._attr_is_on:
-                    self._attr_percentage = 0
         if self._conv_mode:
             val = self._conv_mode.value_from_dict(data)
             if val is not None:
@@ -165,21 +163,27 @@ class FanEntity(XEntity, BaseEntity):
         dat = {}
         if self._conv_power and not self.is_on:
             dat[self._conv_power.full_name] = True
+            self._attr_is_on = True
         if percentage is not None:
             if self._speed_range:
                 dat[self._conv_speed.full_name] = percentage_to_ranged_value(self._speed_range, percentage)
             elif self._speed_list:
                 des = percentage_to_ordered_list_item(self._speed_list, percentage)
                 dat[self._conv_speed.full_name] = des
+            self._attr_percentage = percentage
         if preset_mode is not None:
             dat[self._conv_mode.full_name] = preset_mode
+            self._attr_preset_mode = preset_mode
         if dat:
             await self.device.async_write(dat)
+            self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs):
         if not self._conv_power:
             return
+        self._attr_is_on = False
         await self.device.async_write({self._conv_power.full_name: False})
+        self.async_write_ha_state()
 
     async def async_set_percentage(self, percentage: int):
         if percentage == 0 and self._conv_power:
