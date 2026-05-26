@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import copy
 import re
@@ -162,6 +163,7 @@ class Device(CustomConfigHelper):
     _exclude_miot_properties = None
     _unreadable_properties = None
     _unsub_purge = None
+    _refresh_after_write_task: Optional[asyncio.Task] = None
 
     def __init__(self, info: DeviceInfo, entry: HassEntry):
         self.data = {}
@@ -696,6 +698,19 @@ class Device(CustomConfigHelper):
                     conv.encode(self, payload, v)
         return payload
 
+    def async_schedule_refresh_after_write(self, delay: float = 0):
+        if self._refresh_after_write_task and not self._refresh_after_write_task.done():
+            self._refresh_after_write_task.cancel()
+        async def _refresh():
+            try:
+                await asyncio.sleep(delay)
+                await self.update_all_status()
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # pylint: disable=broad-except
+                self.log.warning('Refresh after write failed: %s', exc)
+        self._refresh_after_write_task = self.hass.async_create_task(_refresh())
+
     async def async_write(self, payload: dict):
         """Send command to device."""
         data = self.encode(payload)
@@ -731,6 +746,8 @@ class Device(CustomConfigHelper):
         self.log.info('Device write result: %s', [payload, result])
         if success:
             self.dispatch(payload)
+            if method != 'action':
+                self.async_schedule_refresh_after_write()
         return result
 
     @property
@@ -1083,6 +1100,7 @@ class Device(CustomConfigHelper):
             self.log.info('Set miot property %s, result: %s', pms, result)
             result.value = value
             self.dispatch(self.decode(result.to_json()))
+            self.async_schedule_refresh_after_write()
         return result
 
     async def async_call_action(self, siid, aiid, params=None, **kwargs):
@@ -1123,6 +1141,7 @@ class Device(CustomConfigHelper):
             return MiotResult({}, code=-1, error=str(exc))
         if result.is_success:
             self.log.debug('Call miot action %s, result: %s', pms, result)
+            self.async_schedule_refresh_after_write()
         else:
             self.log.info('Call miot action %s failed: %s', pms, result)
         return result
